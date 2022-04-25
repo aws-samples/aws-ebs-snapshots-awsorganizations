@@ -1,4 +1,4 @@
-## GetSnapshotDetailsAllAccountsOUMy Project
+## GetSnapshotDetailsAllAccountsOU
 
 ## ** Describe GetSnapshotDetailsAllAccountsOU here **
 
