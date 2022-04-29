@@ -14,13 +14,7 @@
 
 > ** python3 GetSnapshotDetailsAllAccountsOU.py --file output.csv  --region us-east-1**
 
-> ** python3 GetS3BucketPolicies.py --file output.csv  --region us-east-1--account 123456789012 --role OrgPowerUserRole **
->
-
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
+> ** python3 GetSnapshotDetailsAllAccountsOU.py --file output.csv  --region us-east-1--account 123456789012 --role OrgPowerUserRole **
 
 ## Security
 
