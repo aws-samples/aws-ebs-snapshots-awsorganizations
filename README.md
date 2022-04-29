@@ -2,19 +2,17 @@
 
 ## ** Describe GetSnapshotDetailsAllAccountsOU here **
 
-> This is a python script to help you get the list of Snapshots and their details for given region. This script is useful to find the waste across whole OU in terms of snapshots. It provides you details on snashots such as its associated volume, its size, Age of snapshot (Time when it was created), most relavant tag info (Owner and Team). This is very useful for quick investigation of snapshots that can be cleaned and help you to save the cost.
-
-> As added features, this script can let you run this against single account as well as all  accounts of OU. You need to provide IAM role which script can assume in every accounts of OU to able to gather info on snapshot. If you don't provide the role (Optional), script will run only against the account that is configured in your aws config (credentials)
-
-> Script logs run time messages are logged into file called **GetSnapshotDetailsAllAccountsOU.log**. You can check the progress of the script over there while script could be running
-
-> You can use this python script to run it once or you can make lambda function that can be scheduled to run daily via CloudWatch scheduler. Destination can be another S3 bucket.
-
-## Documentation or Example usage:
-
-> ** python3 GetSnapshotDetailsAllAccountsOU.py --file output.csv  --region us-east-1**
-
-> ** python3 GetSnapshotDetailsAllAccountsOU.py --file output.csv  --region us-east-1--account 123456789012 --role OrgPowerUserRole **
+> Use this script to generate an on-demand report of all the Amazon EBS Snapshots in their AWS Account or all  Accounts in an AWS Organizations. Using this script, you will be able to gather AWS Account Id, AWS Tags, Snapshot_Id, Volume_Size, Volume_Id, start_time, instance_id, and Description of the Amazon EBS Snapshots.
+>
+> * You should have the appropriate AWS IAM user or role to run this script in all Accounts in an AWS Organizations.
+> * You can monitor the progress of the script during its run-time. Check *GetSnapshotDetailsAllAccountsOU.log*** **for additional details.
+> * To create a scheduled task, use AWS Lambda function and Amazon CloudWatch Event.
+>
+> Example usage
+>
+> For AWS Account  ** python3 GetSnapshotDetailsAllAccountsOU.py --file output.csv --region <_>**
+>
+> For AWS Organizations ** python3 GetSnapshotDetailsAllAccountsOU.py --file output.csv --region <_> --account <_> --role <_>**
 
 ## Security
 
