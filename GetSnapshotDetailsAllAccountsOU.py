@@ -6,6 +6,7 @@
 # Created:     01/11/2022
 #-------------------------------------------------------------------------------
 
+from multiprocessing import active_children
 import boto3
 import subprocess, csv, os, json
 import argparse, logging
@@ -17,7 +18,6 @@ logging.basicConfig(filename='GetSnapshotDetailsAllAccountsOU.log', level=loggin
 subprocess.call (["clear"], shell = True)
 field_names=['Account', 'Snapshot_Id', 'Volume_Size', 'Volume_Id', 'start_time', 'Owner','Team','instance_id','Description']
 rows = []
-main_account = "xxxxxxx"
 
 # Function to get all accounts for your Org
 def getallAccounts():
@@ -39,32 +39,7 @@ def getallAccounts():
                     pass
     except Exception as e:
         raise e
-    
     return accountList
-
-# Function to get the list of snapshots for given account
-def getallsnapshots(act, client):
-    response = client.describe_snapshots(OwnerIds=[act], MaxResults=500)
-    snapshotList = response["Snapshots"]
-    logging.info(f'Number of Snapshots {len(snapshotList)}')
-    if len(snapshotList) != 0:
-        for snap in snapshotList:
-            if "Tags" in snap:
-                tags = snap['Tags']
-            else:
-                tags = None
-            build_rows_dictionary(act,snap['SnapshotId'],snap['VolumeSize'],snap['VolumeId'],snap['StartTime'],snap['Description'],tags)
-        while('NextToken' in response):
-            response = client.describe_snapshots(OwnerIds=[act], MaxResults=500, NextToken=response['NextToken'])
-            snapshotList=response["Snapshots"]
-            logging.info(f'Number of Snapshots {len(snapshotList)}')
-            if len(snapshotList) != 0:
-                for snap in snapshotList:
-                    if "Tags" in snap:
-                        tags = snap['Tags']
-                    else:
-                        tags = None
-                    build_rows_dictionary(act,snap['SnapshotId'],snap['VolumeSize'],snap['VolumeId'],snap['StartTime'],snap['Description'],tags)
 
 # Function to assume role function for given account
 def assume_role(target_account, role):
@@ -90,6 +65,31 @@ def assume_role(target_account, role):
     role_dict['SecretAccessKey'] = assume_role_object['Credentials']['SecretAccessKey']
     role_dict['SessionToken'] = assume_role_object['Credentials']['SessionToken']
     return role_dict
+
+# Function to get the list of snapshots for given account
+def getallsnapshots(act, client):
+    response = client.describe_snapshots(OwnerIds=[act], MaxResults=500)
+    snapshotList = response["Snapshots"]
+    logging.info(f'Number of Snapshots {len(snapshotList)}')
+    if len(snapshotList) != 0:
+        for snap in snapshotList:
+            if "Tags" in snap:
+                tags = snap['Tags']
+            else:
+                tags = None
+            build_rows_dictionary(act,snap['SnapshotId'],snap['VolumeSize'],snap['VolumeId'],snap['StartTime'],snap['Description'],tags)
+        while('NextToken' in response):
+            response = client.describe_snapshots(OwnerIds=[act], MaxResults=500, NextToken=response['NextToken'])
+            snapshotList=response["Snapshots"]
+            logging.info(f'Number of Snapshots {len(snapshotList)}')
+            if len(snapshotList) != 0:
+                for snap in snapshotList:
+                    if "Tags" in snap:
+                        tags = snap['Tags']
+                    else:
+                        tags = None
+                    build_rows_dictionary(act,snap['SnapshotId'],snap['VolumeSize'],snap['VolumeId'],snap['StartTime'],snap['Description'],tags)
+
 
 # Function to build dictionary with required field on snapshots
 def build_rows_dictionary(account, snapshot_id, volume_size, volume_id, start_time, description, tags):
@@ -118,13 +118,15 @@ def write_csv (filepath):
         csv_writer.writerows(rows) 
         
 def main():
+    sts_client = boto3.client("sts")
+    current_account = sts_client.get_caller_identity()["Account"]
+    client = boto3.client('ec2', region_name=region)
     if (arole != None):
         accounts = getallAccounts()
         logging.info(f'Accounts found --> {len(accounts)}')
         for act in accounts:
-            if act == main_account or act == None:
+            if act == current_account or act == None:
                 logging.info("Account number "+ act)
-                client = boto3.client('ec2', region_name=region)
             else:
                 logging.info("Account number "+ act)
                 credentials=assume_role(act, arole)
@@ -135,14 +137,10 @@ def main():
                         aws_secret_access_key=credentials['SecretAccessKey'],
                         aws_session_token=credentials['SessionToken'])
                 except:
-                    logging.info("Cant assume the role in account "+ act)
+                    logging.info("Can't assume the role in account "+ act)
             getallsnapshots(act, client)
-            
     else:
-        act=main_account
-        logging.info("Account number "+ act)
-        client = boto3.client('ec2', region_name=region)
-        getallsnapshots(act, client)
+        getallsnapshots(current_account, client)
     
     write_csv(file)
 
