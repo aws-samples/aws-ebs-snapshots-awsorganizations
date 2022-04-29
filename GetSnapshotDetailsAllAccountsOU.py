@@ -11,13 +11,13 @@ import subprocess, csv, os, json
 import argparse, logging
 
 # Enable Logging
-logging.basicConfig(filename='getsnapshotinfo.log', level=logging.INFO)
+logging.basicConfig(filename='GetSnapshotDetailsAllAccountsOU.log', level=logging.INFO)
 
 # Define the Global variable here
 subprocess.call (["clear"], shell = True)
 field_names=['Account', 'Snapshot_Id', 'Volume_Size', 'Volume_Id', 'start_time', 'Owner','Team','instance_id','Description']
 rows = []
-main_account = "929292782238"
+main_account = "xxxxxxx"
 
 # Function to get all accounts for your Org
 def getallAccounts():
