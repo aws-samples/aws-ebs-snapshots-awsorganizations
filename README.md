@@ -6,9 +6,9 @@ Use this script to generate an on-demand report of all the Amazon EBS Snapshots 
 
 Example usage
 
-For AWS Account  ** python3 *GetSnapshotDetailsAllAccountsOU.py --file output.csv --region <_>*
+For AWS Account  ** python3 *GetSnapshotDetailsAllAccountsOU.py --file output.csv --region <>*
 
-For AWS Organizations ** python3 *GetSnapshotDetailsAllAccountsOU.py --file output.csv --region <_> --account <_> --role <_>*
+For AWS Organizations ** python3 *GetSnapshotDetailsAllAccountsOU.py --file output.csv --region <> --account <> --role <>*
 
 ## Security
 
