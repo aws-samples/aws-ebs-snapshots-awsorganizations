@@ -1,164 +1,141 @@
 #!/usr/bin/env python3
-#-------------------------------------------------------------------------------
-# Name:        getsnapshotinfo.py
-# Purpose:     To get Details of snapshots for all accounts
+# Name:        GetSnapshotDetailsAllAccountsOU.py
+# Purpose:     Get details of EBS snapshots for the current account or all
+#              active accounts in an AWS Organization.
 # Author:      Parag Nagwekar
 # Created:     01/11/2022
-#-------------------------------------------------------------------------------
+# Updated:     11/12/2026 - Removed shell subprocess call (Bandit B602 /
+#              Semgrep subprocess-shell-true), hardened cross-account error
+#              handling, switched to boto3 paginators.
+import argparse
+import csv
+import logging
+import os
+import sys
 
-from multiprocessing import active_children
 import boto3
-import subprocess, csv, os, json
-import argparse, logging
+from botocore.exceptions import BotoCoreError, ClientError
 
-# Enable Logging
-logging.basicConfig(filename='GetSnapshotDetailsAllAccountsOU.log', level=logging.INFO)
+logging.basicConfig(
+    filename="GetSnapshotDetailsAllAccountsOU.log",
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 
-# Define the Global variable here
-subprocess.call (["clear"], shell = True)
-field_names=['Account', 'Snapshot_Id', 'Volume_Size', 'Volume_Id', 'start_time', 'Owner','Team','instance_id','Description']
-rows = []
+FIELD_NAMES = [
+    "Account", "Snapshot_Id", "Volume_Size", "Volume_Id", "start_time",
+    "Owner", "Team", "instance_id", "Description",
+]
+TAG_FIELDS = {"Owner", "Team", "instance_id"}
 
-# Function to get all accounts for your Org
-def getallAccounts():
-    print('Getting all AWS Accounts')
-    # create empty list for all member Accounts
-    accountList = []
-    # create boto3 client
-    client = boto3.client('organizations')
-    paginator = client.get_paginator('list_accounts')
-    try:
-        # Get all AWS Accounts as reported by AWS Organizations from DDB
-        iterator = paginator.paginate()
-        for page in iterator:
-            for Account in page['Accounts']:
-                if Account['Status'] == 'ACTIVE':
-                    accountList.append(Account['Id'])
-                else:
-                    logging.info('Account ' + Account['Id'] + ' is not Active, skipping!')
-                    pass
-    except Exception as e:
-        raise e
-    return accountList
 
-# Function to assume role function for given account
+def get_all_accounts():
+    """Return IDs of all ACTIVE accounts in the AWS Organization."""
+    print("Getting all AWS Accounts")
+    accounts = []
+    paginator = boto3.client("organizations").get_paginator("list_accounts")
+    for page in paginator.paginate():
+        for account in page["Accounts"]:
+            if account["Status"] == "ACTIVE":
+                accounts.append(account["Id"])
+            else:
+                logging.info("Account %s is not active, skipping", account["Id"])
+    return accounts
+
+
 def assume_role(target_account, role):
-    '''
-      Description: Get cross account credentials for given AWS target account
-      Arguments:
-          master_role_arn: Master account role ARN
-          target_account: Target account number
-      Returns: assubmed cross account role credentials
-    '''
-    sts = boto3.client('sts')
+    """Return temporary credentials for role in target_account, or None on failure."""
+    sts = boto3.client("sts")
     try:
-        assume_role_object = sts.assume_role(
-            RoleArn="arn:aws:iam::" + target_account + ":role/"+ role,
-            RoleSessionName='AssumingCrossAccountRole'
+        response = sts.assume_role(
+            RoleArn=f"arn:aws:iam::{target_account}:role/{role}",
+            RoleSessionName="GetSnapshotDetailsCrossAccount",
         )
-    except Exception as err:
-        logging.error("Error ocurred while assuming role: {}".format(err))
-        return False
-    
-    role_dict = dict()
-    role_dict['AccessKeyId'] = assume_role_object['Credentials']['AccessKeyId']
-    role_dict['SecretAccessKey'] = assume_role_object['Credentials']['SecretAccessKey']
-    role_dict['SessionToken'] = assume_role_object['Credentials']['SessionToken']
-    return role_dict
+    except (ClientError, BotoCoreError) as err:
+        logging.error("Error assuming role in account %s: %s", target_account, err)
+        return None
+    return response["Credentials"]
 
-# Function to get the list of snapshots for given account
-def getallsnapshots(act, client):
-    response = client.describe_snapshots(OwnerIds=[act], MaxResults=500)
-    snapshotList = response["Snapshots"]
-    logging.info(f'Number of Snapshots {len(snapshotList)}')
-    if len(snapshotList) != 0:
-        for snap in snapshotList:
-            if "Tags" in snap:
-                tags = snap['Tags']
+
+def build_row(account, snap):
+    """Build one CSV row from a snapshot record."""
+    row = {
+        "Account": account,
+        "Snapshot_Id": snap["SnapshotId"],
+        "Volume_Size": snap["VolumeSize"],
+        "Volume_Id": snap["VolumeId"],
+        "start_time": snap["StartTime"],
+        "Description": snap.get("Description", ""),
+    }
+    for tag in snap.get("Tags", []):
+        if tag["Key"] in TAG_FIELDS:
+            row[tag["Key"]] = tag["Value"]
+    return row
+
+
+def get_all_snapshots(account, ec2_client):
+    """Return CSV rows for all snapshots owned by account."""
+    rows = []
+    paginator = ec2_client.get_paginator("describe_snapshots")
+    for page in paginator.paginate(OwnerIds=[account], PaginationConfig={"PageSize": 500}):
+        snapshots = page["Snapshots"]
+        logging.info("Account %s: %d snapshots in page", account, len(snapshots))
+        rows.extend(build_row(account, snap) for snap in snapshots)
+    return rows
+
+
+def write_csv(filepath, rows):
+    with open(filepath, "w", newline="") as f:
+        writer = csv.DictWriter(f, FIELD_NAMES)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def main(region, filepath, role):
+    current_account = boto3.client("sts").get_caller_identity()["Account"]
+    rows = []
+
+    if role:
+        accounts = get_all_accounts()
+        logging.info("Accounts found: %d", len(accounts))
+        for account in accounts:
+            logging.info("Processing account %s", account)
+            if account == current_account:
+                ec2_client = boto3.client("ec2", region_name=region)
             else:
-                tags = None
-            build_rows_dictionary(act,snap['SnapshotId'],snap['VolumeSize'],snap['VolumeId'],snap['StartTime'],snap['Description'],tags)
-        while('NextToken' in response):
-            response = client.describe_snapshots(OwnerIds=[act], MaxResults=500, NextToken=response['NextToken'])
-            snapshotList=response["Snapshots"]
-            logging.info(f'Number of Snapshots {len(snapshotList)}')
-            if len(snapshotList) != 0:
-                for snap in snapshotList:
-                    if "Tags" in snap:
-                        tags = snap['Tags']
-                    else:
-                        tags = None
-                    build_rows_dictionary(act,snap['SnapshotId'],snap['VolumeSize'],snap['VolumeId'],snap['StartTime'],snap['Description'],tags)
-
-
-# Function to build dictionary with required field on snapshots
-def build_rows_dictionary(account, snapshot_id, volume_size, volume_id, start_time, description, tags):
-    row_dict={}
-    row_dict["Account"]=account
-    row_dict["Snapshot_Id"]=snapshot_id
-    row_dict["Volume_Size"]=volume_size
-    row_dict["Volume_Id"]=volume_id
-    row_dict["start_time"]=start_time
-    row_dict["Description"]=description
-    if tags:
-        for x in tags:
-            if x['Key'] == "Owner":
-                row_dict["Owner"]=x['Value']
-            elif x['Key'] == "Team":
-                row_dict["Team"]=x['Value']
-            elif x['Key'] == "instance_id":
-                row_dict["instance_id"]=x['Value']
-    rows.append(row_dict)
-        
-# Function to write dictionary to CSV
-def write_csv (filepath):
-    with open(filepath, 'w') as f:
-        csv_writer = csv.DictWriter(f, field_names)
-        csv_writer.writeheader()
-        csv_writer.writerows(rows) 
-        
-def main():
-    sts_client = boto3.client("sts")
-    current_account = sts_client.get_caller_identity()["Account"]
-    client = boto3.client('ec2', region_name=region)
-    if (arole != None):
-        accounts = getallAccounts()
-        logging.info(f'Accounts found --> {len(accounts)}')
-        for act in accounts:
-            if act == current_account or act == None:
-                logging.info("Account number "+ act)
-            else:
-                logging.info("Account number "+ act)
-                credentials=assume_role(act, arole)
-                try: 
-                    client = boto3.client('ec2', 
-                        region_name=region,
-                        aws_access_key_id=credentials['AccessKeyId'],
-                        aws_secret_access_key=credentials['SecretAccessKey'],
-                        aws_session_token=credentials['SessionToken'])
-                except:
-                    logging.info("Can't assume the role in account "+ act)
-            getallsnapshots(act, client)
+                creds = assume_role(account, role)
+                if not creds:
+                    logging.warning("Skipping account %s: cannot assume role", account)
+                    continue
+                ec2_client = boto3.client(
+                    "ec2",
+                    region_name=region,
+                    aws_access_key_id=creds["AccessKeyId"],
+                    aws_secret_access_key=creds["SecretAccessKey"],
+                    aws_session_token=creds["SessionToken"],
+                )
+            try:
+                rows.extend(get_all_snapshots(account, ec2_client))
+            except (ClientError, BotoCoreError) as err:
+                logging.error("Failed to list snapshots in account %s: %s", account, err)
     else:
-        getallsnapshots(current_account, client)
-    
-    write_csv(file)
+        rows = get_all_snapshots(current_account, boto3.client("ec2", region_name=region))
+
+    write_csv(filepath, rows)
+    print(f"Wrote {len(rows)} snapshot records to {filepath}")
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Creates a CSV report about EBS volumes and tracks snapshots on them.')
-    parser.add_argument('--region', required=True, help='AWS region such as us-east-1')
-    parser.add_argument('--file', required=True, help='Path for output CSV file')
-    parser.add_argument('--role', required=False, help='IAM role that script can assume in other accounts')
-    try:
-        args = parser.parse_args()
-        file=args.file
-        region=args.region
-        arole=args.role
-    except NameError:
-        logging.error( "Required arguments are missing. Please provide path for the file and aws region")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Creates a CSV report of EBS snapshots across accounts."
+    )
+    parser.add_argument("--region", required=True, help="AWS region such as us-east-1")
+    parser.add_argument("--file", required=True, help="Path for output CSV file")
+    parser.add_argument("--role", required=False,
+                        help="IAM role the script can assume in member accounts")
+    args = parser.parse_args()
 
-    if os.path.exists(file):
-        raise Exception("File already exists!")
-    else:
-        main()
+    if os.path.exists(args.file):
+        sys.exit(f"Error: output file '{args.file}' already exists.")
+
+    main(args.region, args.file, args.role)
